@@ -29,7 +29,7 @@ class SimulacionMontecarlo(Entrada):
 
         for experimento in range(tamaño_muestra):
             tiempos_fallas = np.random.uniform(1000, 5000, variables_aleatorias)
-            tiempo_falla = np.sort(tiempos_fallas)[criterio_sorteo - 1]
+            tiempo_falla = np.sort(tiempos_fallas)[variables_aleatorias - criterio_sorteo]
             fila = [experimento + 1] + list(tiempos_fallas) + [tiempo_falla]
             df.loc[len(df)] = fila
 
@@ -60,7 +60,7 @@ def main():
     )
     
     criterio_sorteo = st.sidebar.number_input(
-        label ="Criterio de sorteo",
+        label ="Criterio de sorteo (número de páneles necesarios)",
         min_value = 1,
         max_value = variables_aleatorias,
         value = 2
