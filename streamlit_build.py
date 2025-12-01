@@ -1,105 +1,200 @@
+import streamlit as st
 import numpy as np
 import pandas as pd
-import streamlit as st
-
-class Entrada:
-    def __init__(self, variables_aleatorias: int, tamaño_muestra: int, criterio_sorteo: int):
-        assert variables_aleatorias > 3, "número de variables aleatorias debe ser mayor a 3 para mejores resultados"
-        assert tamaño_muestra > 0, "tamaño de muestra debe ser mayor a 0"
-        assert criterio_sorteo <= variables_aleatorias, "El criterio de sorteo k debe ser menor o igual al número de variables aleatorias"
-        self.variables_aleatorias = variables_aleatorias
-        self.tamaño_muestra = tamaño_muestra
-        self.criterio_sorteo = criterio_sorteo
 
 
-class SimulacionMontecarlo(Entrada):
-    def __init__(self, variables_aleatorias: int, tamaño_muestra: int, criterio_sorteo: int, df: pd.DataFrame):
-        super().__init__(variables_aleatorias, tamaño_muestra, criterio_sorteo)
+class SimulacionSateliteMonteCarlo:
+    def __init__(
+        self,
+        n_iteraciones: int,
+        n_satelites_totales: int,
+        n_satelites_necesarios: int,
+        df: pd.DataFrame | None = None
+    ):
         self.df = df
+        self.n_iteraciones = int(n_iteraciones)
 
-    def simulacionmontecarlo(self):
+        if df is None:
+            # Modo aleatorio: el total viene del usuario
+            assert n_satelites_totales >= 1
+            self.n_satelites_totales = int(n_satelites_totales)
+        else:
+            # Modo CSV: el total viene del número de filas del CSV
+            self.n_satelites_totales = df.shape[0]
 
-        variables_aleatorias = self.variables_aleatorias
-        tamaño_muestra = self.tamaño_muestra
-        criterio_sorteo = self.criterio_sorteo
-        df = self.df
+        # Mismo chequeo en ambos modos
+        assert 1 <= n_satelites_necesarios <= self.n_satelites_totales
+        self.n_satelites_necesarios = int(n_satelites_necesarios)
 
-        columnas = ["experimento"] + [f"panel {i+1}" for i in range(variables_aleatorias)] + ["tiempo falla"]
-        df = pd.DataFrame(columns = columnas)
+    def _simular_desde_uniforme(self) -> list[float]:
+        """Modo aleatorio: cada iteración genera tiempos ~ U(1000,5000) para todos los satélites."""
+        outputs = []
+        for _ in range(self.n_iteraciones):
+            tiempos_falla = np.random.uniform(1000, 5000, self.n_satelites_totales)
+            tiempos_falla = np.sort(tiempos_falla)[::-1]  # de mayor a menor
+            idx = self.n_satelites_necesarios - 1         # panel que define la falla
+            tiempo_expected_simulacion = tiempos_falla[idx]
+            outputs.append(tiempo_expected_simulacion)
+        return outputs
 
-        for experimento in range(tamaño_muestra):
-            tiempos_fallas = np.random.uniform(1000, 5000, variables_aleatorias)
-            tiempo_falla = np.sort(tiempos_fallas)[variables_aleatorias - criterio_sorteo]
-            fila = [experimento + 1] + list(tiempos_fallas) + [tiempo_falla]
-            df.loc[len(df)] = fila
+    def _simular_desde_df(self) -> list[float]:
+        """
+        Modo CSV:
+        - filas = satélites
+        - columnas = experimentos/observaciones
+        - Usamos TODAS las columnas: cada columna es un experimento.
+        """
+        data = self.df.to_numpy()  # shape: (n_sats, n_obs)
+        n_sats, n_obs = data.shape
+        outputs = []
 
-        self.df = df
-        return df
+        for j in range(n_obs):  # recorremos cada columna (experimento)
+            tiempos_falla = data[:, j]
+            tiempos_falla = np.sort(tiempos_falla)[::-1]
+            idx = self.n_satelites_necesarios - 1
+            tiempo_expected_simulacion = tiempos_falla[idx]
+            outputs.append(tiempo_expected_simulacion)
+
+        return outputs
+
+    def ejecutar(self) -> tuple[float, float]:
+        if self.df is None:
+            outputs = self._simular_desde_uniforme()
+        else:
+            outputs = self._simular_desde_df()
+
+        promedio_tiempofalla = round(float(np.mean(outputs)), 2)
+        dsv_est = round(float(np.std(outputs)), 2)
+        return promedio_tiempofalla, dsv_est
+
+
+# APP
 
 def main():
-    st.set_page_config(page_title = "Simulación Montecarlo", 
-                       layout = "wide", 
-                       initial_sidebar_state = "expanded")
-    
-    st.title("Simulación Montecarlo")
+    st.set_page_config(page_title="Simulación Monte Carlo - Satélites", layout="centered")
+    st.title("Simulación Monte Carlo de la vida útil de un satélite")
 
-    st.sidebar.header("Parámetros (usar los botones o dar click en el cuadro de texto para modificar)")
-    
-    variables_aleatorias = st.sidebar.number_input(
-        label = "Número de variables aleatorias",
-        min_value = 1,
-        max_value = 1000000,
-        value = 5
-    )
-    
-    tamaño_muestra = st.sidebar.number_input(
-        label  = "Tamaño de muestra",
-        min_value = 1,
-        max_value = 1000001,
-        value = 6
-    )
-    
-    criterio_sorteo = st.sidebar.number_input(
-        label ="Criterio de sorteo (número de páneles necesarios)",
-        min_value = 1,
-        max_value = variables_aleatorias,
-        value = 2
+    st.markdown(
+        """
+        Este simulador estima el **tiempo promedio de funcionamiento** de un sistema de satélites/paneles,
+        asumiendo que el sistema falla cuando hay menos satélites operativos que los necesarios.
+        
+        - En modo **Generar aleatorio**, los tiempos de falla se generan como Uniforme(1000, 5000).
+        - En modo **Usar CSV**, debes subir un archivo **sin encabezados** donde:
+          - Filas = satélites  
+          - Columnas = observaciones/experimentos  
+        """
     )
 
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        ejecutar_simulacion = st.button("Ejecutar simulación")
-    with col2:
-        descargar_csv = st.button("Descargar csv")
+    st.sidebar.header("Parámetros de la simulación")
 
-    if ejecutar_simulacion:
-        st.info(f"Simulación con número de variables aleatorias = {variables_aleatorias}, tamaño de muestra = {tamaño_muestra} y criterio de sorteo = {criterio_sorteo}")
-        
-        entrada = Entrada(variables_aleatorias, tamaño_muestra, criterio_sorteo)
-        algoritmo = SimulacionMontecarlo(entrada.variables_aleatorias, entrada.tamaño_muestra, entrada.criterio_sorteo, pd.DataFrame())
-        
-        resultado_df = algoritmo.simulacionmontecarlo()
-        
-        st.subheader("Resultados")
-        st.dataframe(resultado_df)
+    # Modo de datos
+    modo_datos = st.sidebar.radio(
+        "Fuente de datos",
+        ("Generar aleatorio", "Usar CSV")
+    )
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Experimentos", len(resultado_df))
-        with col2:
-            st.metric("Tiempo de vida promedio", f"{resultado_df['tiempo falla'].mean():.3f}")
+    df = None
+    n_iteraciones = None
+    n_satelites_totales = None
+    n_satelites_necesarios = None
 
-        st.session_state.resultado_df = resultado_df
-
-    if descargar_csv and hasattr(st.session_state, 'resultado_df'):
-        csv_data = st.session_state.resultado_df.to_csv(index = False)
-        st.download_button(
-            label = "Descargar CSV",
-            data = csv_data,
-            file_name = "simulacionMontecarlo.csv"
+    if modo_datos == "Generar aleatorio":
+        # Aquí sí se usan los tres parámetros
+        n_satelites_totales = st.sidebar.number_input(
+            "Número total de satélites/paneles",
+            min_value=1,
+            max_value=1000,
+            value=5,
+            step=1
         )
-    elif descargar_csv:
-        st.warning("Ejecutar primero")
+
+        n_satelites_necesarios = st.sidebar.number_input(
+            "Número de satélites necesarios para que el sistema funcione",
+            min_value=1,
+            max_value=int(n_satelites_totales),
+            value=2,
+            step=1
+        )
+
+        n_iteraciones = st.sidebar.number_input(
+            "Número de iteraciones de Monte Carlo",
+            min_value=1,
+            max_value=1000000,
+            value=1000,
+            step=1
+        )
+
+    else:  # Usar CSV
+        st.markdown(
+            """
+            ### Formato requerido del CSV
+            
+            - Cada **fila** representa un satélite/panel.  
+            - Cada **columna** representa un experimento/observación.  
+            - Los valores deben ser los **tiempos de falla**.
+            """
+        )
+        archivo = st.sidebar.file_uploader("Sube el archivo CSV", type=["csv"])
+        if archivo is not None:
+            df = pd.read_csv(archivo, header=None)
+            n_satelites_totales = df.shape[0]
+
+            st.subheader("Vista previa del CSV")
+            st.write(df.head())
+            st.info(
+                f"El CSV tiene {n_satelites_totales} filas (satélites) "
+                f"y {df.shape[1]} columnas (observaciones/experimentos)."
+            )
+
+            # En modo CSV, el input relevante es SOLO el número de satélites necesarios
+            n_satelites_necesarios = st.sidebar.number_input(
+                "Número de satélites necesarios para que el sistema funcione",
+                min_value=1,
+                max_value=int(n_satelites_totales),
+                value=2,
+                step=1
+            )
+
+            # n_iteraciones en este modo no se usa para el cálculo (se usan todas las columnas),
+            # pero le pasamos un valor dummy (1) para cumplir la firma del constructor.
+            n_iteraciones = 1
+        else:
+            st.sidebar.info("Sube un CSV para usar esta opción.")
+
+    if st.button("Ejecutar simulación"):
+        try:
+            if modo_datos == "Generar aleatorio":
+                simulador = SimulacionSateliteMonteCarlo(
+                    n_iteraciones=int(n_iteraciones),
+                    n_satelites_totales=int(n_satelites_totales),
+                    n_satelites_necesarios=int(n_satelites_necesarios),
+                    df=None
+                )
+            else:
+                if df is None:
+                    st.error("Seleccionaste 'Usar CSV', pero no se ha subido ningún archivo.")
+                    return
+
+                simulador = SimulacionSateliteMonteCarlo(
+                    n_iteraciones=int(n_iteraciones),          # no afecta en modo CSV
+                    n_satelites_totales=df.shape[0],           # se reemplaza por df.shape[0] en la clase
+                    n_satelites_necesarios=int(n_satelites_necesarios),
+                    df=df
+                )
+
+            promedio, dsv = simulador.ejecutar()
+
+            st.subheader("Resultados de la simulación")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Tiempo promedio de falla", f"{promedio} horas")
+            with col2:
+                st.metric("Desviación estándar", f"{dsv} horas")
+
+        except Exception as e:
+            st.error(f"Ocurrió un error al ejecutar la simulación: {e}")
+
 
 if __name__ == "__main__":
     main()
